@@ -6,8 +6,9 @@ import PlanPage from '@/pages/PlanPage'
 import Diary from '@/pages/Diary'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth()
-  if (loading) {
+  const { user, loading, profileLoading } = useAuth()
+  // 等 session 确定 + profile 加载完，避免页面用 role=null 短暂渲染
+  if (loading || (user && profileLoading)) {
     return (
       <div className="min-h-screen flex items-center justify-center text-muted-foreground">
         加载中...

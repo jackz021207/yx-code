@@ -1,105 +1,45 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
-import type { Checkin, CheckinReply, Profile } from '@/lib/database.types'
+import { Skeleton } from '@/components/ui/skeleton'
 import { ArrowLeft, Heart, Trash2, MessageCircle, Send } from 'lucide-react'
-
-interface CheckinWithReplies extends Checkin {
-  replies: CheckinReply[]
-}
+import {
+  useOwnerProfile,
+  useDiary,
+  useCreateReply,
+  useDeleteReply,
+} from '@/lib/queries'
 
 export default function Diary() {
   const { user, role } = useAuth()
-  const [ownerProfile, setOwnerProfile] = useState<Profile | null>(null)
-  const [items, setItems] = useState<CheckinWithReplies[]>([])
   const [drafts, setDrafts] = useState<Record<string, string>>({})
-  const [sending, setSending] = useState<Record<string, boolean>>({})
-  const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    if (user) load()
-  }, [user])
+  const ownerProfileQ = useOwnerProfile()
+  const ownerId = ownerProfileQ.data?.user_id
+  const diaryQ = useDiary(ownerId)
 
-  async function load() {
-    setLoading(true)
-    const { data: owner } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('role', 'owner')
-      .maybeSingle()
-    setOwnerProfile(owner)
-    if (!owner) {
-      setLoading(false)
-      return
-    }
+  const createReply = useCreateReply()
+  const deleteReply = useDeleteReply()
 
-    const { data: checkins } = await supabase
-      .from('checkins')
-      .select('*')
-      .eq('user_id', owner.user_id)
-      .order('date', { ascending: false })
-      .limit(60)
-
-    if (!checkins || checkins.length === 0) {
-      setItems([])
-      setLoading(false)
-      return
-    }
-
-    const { data: replies } = await supabase
-      .from('checkin_replies')
-      .select('*')
-      .in('checkin_id', checkins.map((c) => c.id))
-      .order('created_at', { ascending: true })
-
-    const grouped: CheckinWithReplies[] = checkins.map((c) => ({
-      ...c,
-      replies: (replies ?? []).filter((r) => r.checkin_id === c.id),
-    }))
-    setItems(grouped)
-    setLoading(false)
-  }
+  const isAdmin = role === 'admin'
+  const ownerName = ownerProfileQ.data?.display_name ?? '她'
+  const items = diaryQ.data ?? []
+  const loading = diaryQ.isPending
 
   async function sendReply(checkinId: string) {
     if (!user || role !== 'admin') return
     const content = drafts[checkinId]?.trim()
     if (!content) return
-
-    setSending((s) => ({ ...s, [checkinId]: true }))
-    const { data } = await supabase
-      .from('checkin_replies')
-      .insert({ checkin_id: checkinId, author_id: user.id, content })
-      .select()
-      .single()
-
-    if (data) {
-      setItems((prev) =>
-        prev.map((c) =>
-          c.id === checkinId ? { ...c, replies: [...c.replies, data] } : c
-        )
-      )
-      setDrafts((d) => ({ ...d, [checkinId]: '' }))
-    }
-    setSending((s) => ({ ...s, [checkinId]: false }))
+    await createReply.mutateAsync({
+      checkinId,
+      authorId: user.id,
+      content,
+    })
+    setDrafts((d) => ({ ...d, [checkinId]: '' }))
   }
-
-  async function deleteReply(replyId: string, checkinId: string) {
-    await supabase.from('checkin_replies').delete().eq('id', replyId)
-    setItems((prev) =>
-      prev.map((c) =>
-        c.id === checkinId
-          ? { ...c, replies: c.replies.filter((r) => r.id !== replyId) }
-          : c
-      )
-    )
-  }
-
-  const isAdmin = role === 'admin'
-  const ownerName = ownerProfile?.display_name ?? '她'
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -123,100 +63,105 @@ export default function Diary() {
 
       <main className="max-w-2xl mx-auto p-6 space-y-4">
         {loading && (
-          <p className="text-center text-muted-foreground py-12">加载中...</p>
+          <>
+            <Skeleton className="h-32 w-full" />
+            <Skeleton className="h-32 w-full" />
+            <Skeleton className="h-32 w-full" />
+          </>
         )}
 
         {!loading && items.length === 0 && (
           <div className="text-center py-12 text-muted-foreground">
-            {isAdmin ? `${ownerName} 还没有打卡记录` : '你还没有打卡，去 Dashboard 打卡吧'}
+            {isAdmin
+              ? `${ownerName} 还没有打卡记录`
+              : '你还没有打卡，去 Dashboard 打卡吧'}
           </div>
         )}
 
-        {items.map((item) => (
-          <Card key={item.id}>
-            <CardContent className="pt-6 space-y-4">
-              {/* 打卡内容 */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-semibold">{formatDate(item.date)}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {formatRelative(item.created_at)}
-                  </span>
+        {!loading &&
+          items.map((item) => (
+            <Card key={item.id}>
+              <CardContent className="pt-6 space-y-4">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-semibold">{formatDate(item.date)}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {formatRelative(item.created_at)}
+                    </span>
+                  </div>
+                  {item.note ? (
+                    <p className="text-sm whitespace-pre-wrap leading-relaxed">
+                      {item.note}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground italic">这天没留言</p>
+                  )}
                 </div>
-                {item.note ? (
-                  <p className="text-sm whitespace-pre-wrap leading-relaxed">{item.note}</p>
-                ) : (
-                  <p className="text-sm text-muted-foreground italic">这天没留言</p>
-                )}
-              </div>
 
-              {/* 回复线程 */}
-              {item.replies.length > 0 && (
-                <div className="border-t pt-3 space-y-2">
-                  {item.replies.map((reply) => (
-                    <div
-                      key={reply.id}
-                      className="flex items-start gap-2 bg-pink-50 rounded-lg p-3 group"
-                    >
-                      <Heart className="h-4 w-4 text-pink-500 mt-0.5 flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm whitespace-pre-wrap leading-relaxed">
-                          {reply.content}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {formatRelative(reply.created_at)}
-                        </p>
+                {item.replies.length > 0 && (
+                  <div className="border-t pt-3 space-y-2">
+                    {item.replies.map((reply) => (
+                      <div
+                        key={reply.id}
+                        className="flex items-start gap-2 bg-pink-50 rounded-lg p-3 group"
+                      >
+                        <Heart className="h-4 w-4 text-pink-500 mt-0.5 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm whitespace-pre-wrap leading-relaxed">
+                            {reply.content}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {formatRelative(reply.created_at)}
+                          </p>
+                        </div>
+                        {isAdmin && reply.author_id === user?.id && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                            onClick={() => deleteReply.mutate(reply.id)}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        )}
                       </div>
-                      {isAdmin && reply.author_id === user?.id && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                          onClick={() => deleteReply(reply.id, item.id)}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
 
-              {/* admin 的回复输入 */}
-              {isAdmin && (
-                <div className="border-t pt-3 space-y-2">
-                  <Textarea
-                    placeholder={`给 ${ownerName} 留点话...`}
-                    value={drafts[item.id] ?? ''}
-                    onChange={(e) =>
-                      setDrafts((d) => ({ ...d, [item.id]: e.target.value }))
-                    }
-                    rows={2}
-                    className="text-sm"
-                  />
-                  <Button
-                    size="sm"
-                    onClick={() => sendReply(item.id)}
-                    disabled={!drafts[item.id]?.trim() || sending[item.id]}
-                  >
-                    <Send className="h-3 w-3 mr-1" />
-                    {sending[item.id] ? '发送中...' : '发送'}
-                  </Button>
-                </div>
-              )}
+                {isAdmin && (
+                  <div className="border-t pt-3 space-y-2">
+                    <Textarea
+                      placeholder={`给 ${ownerName} 留点话...`}
+                      value={drafts[item.id] ?? ''}
+                      onChange={(e) =>
+                        setDrafts((d) => ({ ...d, [item.id]: e.target.value }))
+                      }
+                      rows={2}
+                      className="text-sm"
+                    />
+                    <Button
+                      size="sm"
+                      onClick={() => sendReply(item.id)}
+                      disabled={!drafts[item.id]?.trim() || createReply.isPending}
+                    >
+                      <Send className="h-3 w-3 mr-1" />
+                      {createReply.isPending ? '发送中...' : '发送'}
+                    </Button>
+                  </div>
+                )}
 
-              {/* owner 没收到回复时的提示 */}
-              {!isAdmin && item.replies.length === 0 && (
-                <div className="border-t pt-3">
-                  <p className="text-xs text-muted-foreground flex items-center gap-1">
-                    <MessageCircle className="h-3 w-3" />
-                    还没有留言
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        ))}
+                {!isAdmin && item.replies.length === 0 && (
+                  <div className="border-t pt-3">
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      <MessageCircle className="h-3 w-3" />
+                      还没有留言
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
       </main>
     </div>
   )

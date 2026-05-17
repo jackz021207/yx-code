@@ -1,12 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
-import type { Checkin, CheckinReply, Plan, Profile } from '@/lib/database.types'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   Flame,
   CheckCircle2,
@@ -17,123 +16,51 @@ import {
   BookOpen,
   MessageCircle,
 } from 'lucide-react'
+import {
+  useOwnerProfile,
+  useTodayCheckin,
+  useTodayReplies,
+  useAllCheckinDates,
+  useMonthCompleted,
+  useRecentPlans,
+  useCreateCheckin,
+} from '@/lib/queries'
 
 export default function Dashboard() {
-  const { user, profile, role, signOut } = useAuth()
-  const [ownerProfile, setOwnerProfile] = useState<Profile | null>(null)
-  const [todayCheckin, setTodayCheckin] = useState<Checkin | null>(null)
-  const [todayReplies, setTodayReplies] = useState<CheckinReply[]>([])
-  const [streak, setStreak] = useState(0)
-  const [totalCheckins, setTotalCheckins] = useState(0)
-  const [recentPlans, setRecentPlans] = useState<Plan[]>([])
-  const [monthCompleted, setMonthCompleted] = useState(0)
+  const { user, role, signOut } = useAuth()
   const [note, setNote] = useState('')
-  const [checkingIn, setCheckingIn] = useState(false)
 
   const today = new Date().toISOString().split('T')[0]
+  const monthStart = today.slice(0, 7) + '-01'
 
-  useEffect(() => {
-    if (!user || !role) return
-    loadDashboardData()
-  }, [user, role])
+  const ownerProfileQ = useOwnerProfile()
+  const ownerId = ownerProfileQ.data?.user_id
 
-  async function loadDashboardData() {
-    // 找到 owner 的 user_id（owner 自己就是 user.id；admin 需要查 owner profile）
-    const { data: owner } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('role', 'owner')
-      .maybeSingle()
-    setOwnerProfile(owner)
-    if (!owner) return
+  const todayCheckinQ = useTodayCheckin(ownerId, today)
+  const todayRepliesQ = useTodayReplies(todayCheckinQ.data?.id)
+  const allDatesQ = useAllCheckinDates(ownerId)
+  const monthCompletedQ = useMonthCompleted(ownerId, monthStart)
+  const recentPlansQ = useRecentPlans(ownerId)
 
-    const ownerId = owner.user_id
+  const createCheckin = useCreateCheckin()
 
-    // 今天的打卡
-    const { data: todayData } = await supabase
-      .from('checkins')
-      .select('*')
-      .eq('user_id', ownerId)
-      .eq('date', today)
-      .maybeSingle()
-    setTodayCheckin(todayData)
+  const streak = useMemo(() => calcStreak(allDatesQ.data ?? []), [allDatesQ.data])
+  const totalCheckins = allDatesQ.data?.length ?? 0
 
-    if (todayData) {
-      const { data: replies } = await supabase
-        .from('checkin_replies')
-        .select('*')
-        .eq('checkin_id', todayData.id)
-        .order('created_at', { ascending: true })
-      setTodayReplies(replies ?? [])
-    }
+  const isAdmin = role === 'admin'
+  const ownerName = ownerProfileQ.data?.display_name ?? '她'
 
-    // 所有打卡记录
-    const { data: allCheckins } = await supabase
-      .from('checkins')
-      .select('date')
-      .eq('user_id', ownerId)
-      .order('date', { ascending: false })
-
-    if (allCheckins) {
-      setTotalCheckins(allCheckins.length)
-      setStreak(calcStreak(allCheckins.map((c) => c.date)))
-    }
-
-    // 本月完成的题目
-    const firstOfMonth = today.slice(0, 7) + '-01'
-    const { count } = await supabase
-      .from('plans')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', ownerId)
-      .eq('status', 'completed')
-      .gte('completed_at', firstOfMonth)
-    setMonthCompleted(count ?? 0)
-
-    // 近期计划
-    const { data: plans } = await supabase
-      .from('plans')
-      .select('*')
-      .eq('user_id', ownerId)
-      .neq('status', 'completed')
-      .order('target_date', { ascending: true })
-      .limit(5)
-    setRecentPlans(plans ?? [])
-  }
-
-  function calcStreak(dates: string[]): number {
-    if (!dates.length) return 0
-    const sorted = [...dates].sort((a, b) => b.localeCompare(a))
-    let streak = 0
-    let current = new Date()
-    current.setHours(0, 0, 0, 0)
-    for (const dateStr of sorted) {
-      const d = new Date(dateStr)
-      d.setHours(0, 0, 0, 0)
-      const diff = (current.getTime() - d.getTime()) / 86400000
-      if (diff <= 1) {
-        streak++
-        current = d
-      } else {
-        break
-      }
-    }
-    return streak
-  }
+  // 初始加载（找 owner）
+  const initialLoading = ownerProfileQ.isPending
 
   async function handleCheckin() {
-    if (!user || todayCheckin || checkingIn || role !== 'owner') return
-    setCheckingIn(true)
-    const { data } = await supabase
-      .from('checkins')
-      .insert({ user_id: user.id, date: today, note: note || null })
-      .select()
-      .single()
-    if (data) {
-      setTodayCheckin(data)
-      setStreak((s) => s + 1)
-      setTotalCheckins((t) => t + 1)
-    }
-    setCheckingIn(false)
+    if (!user || todayCheckinQ.data || role !== 'owner') return
+    await createCheckin.mutateAsync({
+      userId: user.id,
+      date: today,
+      note: note || null,
+    })
+    setNote('')
   }
 
   const difficultyVariant: Record<string, 'easy' | 'medium' | 'hard'> = {
@@ -141,9 +68,6 @@ export default function Dashboard() {
     medium: 'medium',
     hard: 'hard',
   }
-
-  const isAdmin = role === 'admin'
-  const ownerName = ownerProfile?.display_name ?? '她'
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -182,37 +106,37 @@ export default function Dashboard() {
       <main className="max-w-4xl mx-auto p-6 space-y-6">
         {/* 统计卡片 */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="pt-6 text-center">
-              <Flame className="h-8 w-8 text-orange-500 mx-auto mb-2" />
-              <div className="text-3xl font-bold text-orange-500">{streak}</div>
-              <div className="text-sm text-muted-foreground">连续打卡天数</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6 text-center">
-              <CalendarDays className="h-8 w-8 text-blue-500 mx-auto mb-2" />
-              <div className="text-3xl font-bold text-blue-500">{totalCheckins}</div>
-              <div className="text-sm text-muted-foreground">累计打卡</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6 text-center">
-              <CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-2" />
-              <div className="text-3xl font-bold text-green-500">{monthCompleted}</div>
-              <div className="text-sm text-muted-foreground">本月完成题目</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6 text-center">
-              <Trophy className="h-8 w-8 text-purple-500 mx-auto mb-2" />
-              <div className="text-3xl font-bold text-purple-500">{recentPlans.length}</div>
-              <div className="text-sm text-muted-foreground">待完成计划</div>
-            </CardContent>
-          </Card>
+          <StatCard
+            icon={<Flame className="h-8 w-8 text-orange-500 mx-auto mb-2" />}
+            value={streak}
+            label="连续打卡天数"
+            color="text-orange-500"
+            loading={allDatesQ.isPending}
+          />
+          <StatCard
+            icon={<CalendarDays className="h-8 w-8 text-blue-500 mx-auto mb-2" />}
+            value={totalCheckins}
+            label="累计打卡"
+            color="text-blue-500"
+            loading={allDatesQ.isPending}
+          />
+          <StatCard
+            icon={<CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-2" />}
+            value={monthCompletedQ.data ?? 0}
+            label="本月完成题目"
+            color="text-green-500"
+            loading={monthCompletedQ.isPending}
+          />
+          <StatCard
+            icon={<Trophy className="h-8 w-8 text-purple-500 mx-auto mb-2" />}
+            value={recentPlansQ.data?.length ?? 0}
+            label="待完成计划"
+            color="text-purple-500"
+            loading={recentPlansQ.isPending}
+          />
         </div>
 
-        {/* 今日打卡区 */}
+        {/* 今日打卡 */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -221,7 +145,12 @@ export default function Dashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {todayCheckin ? (
+            {todayCheckinQ.isPending ? (
+              <div className="space-y-2">
+                <Skeleton className="h-5 w-32" />
+                <Skeleton className="h-4 w-full" />
+              </div>
+            ) : todayCheckinQ.data ? (
               <div className="space-y-4">
                 <div className="flex items-start gap-3">
                   <CheckCircle2 className="h-6 w-6 text-green-500 flex-shrink-0 mt-0.5" />
@@ -229,16 +158,17 @@ export default function Dashboard() {
                     <p className="font-medium text-green-600">
                       {isAdmin ? `${ownerName} 今天打卡了` : '今天已打卡！'}
                     </p>
-                    {todayCheckin.note && (
-                      <p className="text-sm mt-1 whitespace-pre-wrap">{todayCheckin.note}</p>
+                    {todayCheckinQ.data.note && (
+                      <p className="text-sm mt-1 whitespace-pre-wrap">
+                        {todayCheckinQ.data.note}
+                      </p>
                     )}
                   </div>
                 </div>
 
-                {/* 今日的回复 */}
-                {todayReplies.length > 0 && (
+                {todayRepliesQ.data && todayRepliesQ.data.length > 0 && (
                   <div className="border-l-2 border-pink-200 pl-4 ml-3 space-y-2">
-                    {todayReplies.map((reply) => (
+                    {todayRepliesQ.data.map((reply) => (
                       <div key={reply.id} className="flex items-start gap-2">
                         <Heart className="h-4 w-4 text-pink-500 mt-1 flex-shrink-0" />
                         <p className="text-sm text-muted-foreground whitespace-pre-wrap">
@@ -249,7 +179,6 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* 提示去日记页回复 */}
                 {isAdmin && (
                   <Link to="/diary">
                     <Button variant="outline" size="sm" className="w-full">
@@ -271,25 +200,37 @@ export default function Dashboard() {
                   onChange={(e) => setNote(e.target.value)}
                   rows={3}
                 />
-                <Button onClick={handleCheckin} disabled={checkingIn} className="w-full">
-                  {checkingIn ? '打卡中...' : '立即打卡'}
+                <Button
+                  onClick={handleCheckin}
+                  disabled={createCheckin.isPending}
+                  className="w-full"
+                >
+                  {createCheckin.isPending ? '打卡中...' : '立即打卡'}
                 </Button>
               </div>
             )}
           </CardContent>
         </Card>
 
-        {/* 近期计划预览 */}
-        {recentPlans.length > 0 && (
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>{isAdmin ? `${ownerName} 的待完成计划` : '待完成计划'}</CardTitle>
-              <Link to="/plan">
-                <Button variant="ghost" size="sm">查看全部</Button>
-              </Link>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {recentPlans.map((plan) => (
+        {/* 近期计划 */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle>
+              {isAdmin ? `${ownerName} 的待完成计划` : '待完成计划'}
+            </CardTitle>
+            <Link to="/plan">
+              <Button variant="ghost" size="sm">查看全部</Button>
+            </Link>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {recentPlansQ.isPending ? (
+              <>
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-8 w-3/4" />
+              </>
+            ) : recentPlansQ.data && recentPlansQ.data.length > 0 ? (
+              recentPlansQ.data.map((plan) => (
                 <div
                   key={plan.id}
                   className="flex items-center justify-between py-2 border-b last:border-0"
@@ -313,13 +254,17 @@ export default function Dashboard() {
                     </span>
                   )}
                 </div>
-              ))}
-            </CardContent>
-          </Card>
-        )}
+              ))
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                {isAdmin ? `${ownerName} 还没添加题目` : '还没有题目，去计划页添加吧'}
+              </p>
+            )}
+          </CardContent>
+        </Card>
 
-        {/* profile 未配置提示 */}
-        {profile && !ownerProfile && (
+        {/* owner 未配置提示（只在所有查询都完成且确实没找到 owner 时显示） */}
+        {!initialLoading && !ownerProfileQ.data && (
           <Card className="border-yellow-300 bg-yellow-50">
             <CardContent className="pt-6">
               <p className="text-sm text-yellow-800">
@@ -331,4 +276,52 @@ export default function Dashboard() {
       </main>
     </div>
   )
+}
+
+function StatCard({
+  icon,
+  value,
+  label,
+  color,
+  loading,
+}: {
+  icon: React.ReactNode
+  value: number
+  label: string
+  color: string
+  loading: boolean
+}) {
+  return (
+    <Card>
+      <CardContent className="pt-6 text-center">
+        {icon}
+        {loading ? (
+          <Skeleton className="h-9 w-12 mx-auto" />
+        ) : (
+          <div className={`text-3xl font-bold ${color}`}>{value}</div>
+        )}
+        <div className="text-sm text-muted-foreground mt-1">{label}</div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function calcStreak(dates: string[]): number {
+  if (!dates.length) return 0
+  const sorted = [...dates].sort((a, b) => b.localeCompare(a))
+  let streak = 0
+  let current = new Date()
+  current.setHours(0, 0, 0, 0)
+  for (const dateStr of sorted) {
+    const d = new Date(dateStr)
+    d.setHours(0, 0, 0, 0)
+    const diff = (current.getTime() - d.getTime()) / 86400000
+    if (diff <= 1) {
+      streak++
+      current = d
+    } else {
+      break
+    }
+  }
+  return streak
 }

@@ -8,6 +8,7 @@ export function useAuth() {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
+  const [profileLoading, setProfileLoading] = useState(true)
 
   useEffect(() => {
     let cancelled = false
@@ -19,11 +20,18 @@ export function useAuth() {
         setSession(session)
         setUser(session?.user ?? null)
         setLoading(false)
-        if (session?.user) loadProfile(session.user.id)
+        if (session?.user) {
+          loadProfile(session.user.id)
+        } else {
+          setProfileLoading(false)
+        }
       })
       .catch((err) => {
         console.error('[useAuth] getSession failed:', err)
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          setLoading(false)
+          setProfileLoading(false)
+        }
       })
 
     const {
@@ -36,6 +44,7 @@ export function useAuth() {
         loadProfile(session.user.id)
       } else {
         setProfile(null)
+        setProfileLoading(false)
       }
     })
 
@@ -46,13 +55,20 @@ export function useAuth() {
   }, [])
 
   async function loadProfile(userId: string) {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('user_id', userId)
-      .maybeSingle()
-    if (error) console.error('[useAuth] loadProfile failed:', error)
-    setProfile(data ?? null)
+    setProfileLoading(true)
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle()
+      if (error) console.error('[useAuth] loadProfile failed:', error)
+      setProfile(data ?? null)
+    } catch (err) {
+      console.error('[useAuth] loadProfile exception:', err)
+    } finally {
+      setProfileLoading(false)
+    }
   }
 
   const signOut = () => supabase.auth.signOut()
@@ -63,6 +79,7 @@ export function useAuth() {
     profile,
     role: profile?.role ?? null,
     loading,
+    profileLoading,
     signOut,
   }
 }

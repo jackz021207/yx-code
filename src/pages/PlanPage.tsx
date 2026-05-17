@@ -1,6 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { Progress } from '@/components/ui/progress'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   Dialog,
   DialogContent,
@@ -17,8 +17,15 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
-import type { Plan, Difficulty, PlanStatus, Profile } from '@/lib/database.types'
+import type { Difficulty, PlanStatus } from '@/lib/database.types'
 import { Plus, CheckCircle2, Circle, ArrowLeft, Trash2 } from 'lucide-react'
+import {
+  useOwnerProfile,
+  useAllPlans,
+  useCreatePlan,
+  useUpdatePlanStatus,
+  useDeletePlan,
+} from '@/lib/queries'
 
 const DIFFICULTY_LABELS: Record<Difficulty, string> = {
   easy: '简单',
@@ -43,79 +50,50 @@ const defaultForm = {
 
 export default function PlanPage() {
   const { user, role } = useAuth()
-  const [ownerProfile, setOwnerProfile] = useState<Profile | null>(null)
-  const [plans, setPlans] = useState<Plan[]>([])
   const [filter, setFilter] = useState<PlanStatus | 'all'>('all')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [form, setForm] = useState(defaultForm)
-  const [saving, setSaving] = useState(false)
 
   const isAdmin = role === 'admin'
 
-  useEffect(() => {
-    if (user) load()
-  }, [user])
+  const ownerProfileQ = useOwnerProfile()
+  const ownerId = ownerProfileQ.data?.user_id
+  const plansQ = useAllPlans(ownerId)
 
-  async function load() {
-    const { data: owner } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('role', 'owner')
-      .maybeSingle()
-    setOwnerProfile(owner)
-    if (!owner) return
+  const createPlan = useCreatePlan()
+  const updateStatus = useUpdatePlanStatus()
+  const deletePlan = useDeletePlan()
 
-    const { data } = await supabase
-      .from('plans')
-      .select('*')
-      .eq('user_id', owner.user_id)
-      .order('created_at', { ascending: false })
-    setPlans(data ?? [])
-  }
+  const plans = plansQ.data ?? []
+  const filtered = filter === 'all' ? plans : plans.filter((p) => p.status === filter)
+  const completed = plans.filter((p) => p.status === 'completed').length
+  const progress = plans.length > 0 ? Math.round((completed / plans.length) * 100) : 0
+  const ownerName = ownerProfileQ.data?.display_name ?? '她'
 
   async function addPlan() {
     if (!user || !form.lc_number || !form.title || isAdmin) return
-    setSaving(true)
-    await supabase.from('plans').insert({
-      user_id: user.id,
+    await createPlan.mutateAsync({
+      userId: user.id,
       lc_number: parseInt(form.lc_number),
       title: form.title,
       difficulty: form.difficulty,
       tags: form.tags ? form.tags.split(',').map((t) => t.trim()) : [],
       target_date: form.target_date || null,
-      status: 'todo',
       note: form.note || null,
-      completed_at: null,
     })
-    setSaving(false)
     setDialogOpen(false)
     setForm(defaultForm)
-    load()
   }
 
-  async function updateStatus(id: string, status: PlanStatus) {
+  function toggleComplete(id: string, currentStatus: PlanStatus) {
     if (isAdmin) return
-    await supabase
-      .from('plans')
-      .update({
-        status,
-        completed_at: status === 'completed' ? new Date().toISOString() : null,
-      })
-      .eq('id', id)
-    setPlans((prev) => prev.map((p) => (p.id === id ? { ...p, status } : p)))
+    updateStatus.mutate({
+      id,
+      status: currentStatus === 'completed' ? 'todo' : 'completed',
+    })
   }
 
-  async function deletePlan(id: string) {
-    if (isAdmin) return
-    await supabase.from('plans').delete().eq('id', id)
-    setPlans((prev) => prev.filter((p) => p.id !== id))
-  }
-
-  const filtered = filter === 'all' ? plans : plans.filter((p) => p.status === filter)
-  const completed = plans.filter((p) => p.status === 'completed').length
-  const progress = plans.length > 0 ? Math.round((completed / plans.length) * 100) : 0
-
-  const ownerName = ownerProfile?.display_name ?? '她'
+  const loading = plansQ.isPending
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -130,9 +108,7 @@ export default function PlanPage() {
             <h1 className="text-xl font-bold">
               {isAdmin ? `${ownerName} 的刷题计划` : '我的刷题计划'}
             </h1>
-            {isAdmin && (
-              <p className="text-xs text-muted-foreground">只读视图</p>
-            )}
+            {isAdmin && <p className="text-xs text-muted-foreground">只读视图</p>}
           </div>
         </div>
         {!isAdmin && (
@@ -148,11 +124,20 @@ export default function PlanPage() {
             <CardTitle className="text-base">总体进度</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            <div className="flex justify-between text-sm text-muted-foreground">
-              <span>{completed} / {plans.length} 题已完成</span>
-              <span>{progress}%</span>
-            </div>
-            <Progress value={progress} className="h-2" />
+            {loading ? (
+              <>
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-2 w-full" />
+              </>
+            ) : (
+              <>
+                <div className="flex justify-between text-sm text-muted-foreground">
+                  <span>{completed} / {plans.length} 题已完成</span>
+                  <span>{progress}%</span>
+                </div>
+                <Progress value={progress} className="h-2" />
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -170,94 +155,101 @@ export default function PlanPage() {
         </div>
 
         <div className="space-y-2">
-          {filtered.length === 0 && (
+          {loading && (
+            <>
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+            </>
+          )}
+
+          {!loading && filtered.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
               {isAdmin
                 ? `${ownerName} 还没添加题目`
                 : '还没有题目，点击右上角添加吧'}
             </div>
           )}
-          {filtered.map((plan) => (
-            <Card key={plan.id} className="hover:shadow-md transition-shadow">
-              <CardContent className="py-4">
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() =>
-                      updateStatus(
-                        plan.id,
-                        plan.status === 'completed' ? 'todo' : 'completed'
-                      )
-                    }
-                    disabled={isAdmin}
-                    className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0 disabled:cursor-default disabled:hover:text-muted-foreground"
-                  >
-                    {plan.status === 'completed' ? (
-                      <CheckCircle2 className="h-5 w-5 text-green-500" />
-                    ) : (
-                      <Circle className="h-5 w-5" />
-                    )}
-                  </button>
 
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-mono text-muted-foreground">
-                        #{plan.lc_number}
-                      </span>
-                      <span
-                        className={`font-medium ${plan.status === 'completed' ? 'line-through text-muted-foreground' : ''}`}
-                      >
-                        {plan.title}
-                      </span>
-                      <Badge variant={plan.difficulty as 'easy' | 'medium' | 'hard'}>
-                        {DIFFICULTY_LABELS[plan.difficulty]}
-                      </Badge>
-                      {isAdmin && plan.status === 'in_progress' && (
-                        <Badge variant="secondary">进行中</Badge>
+          {!loading &&
+            filtered.map((plan) => (
+              <Card key={plan.id} className="hover:shadow-md transition-shadow">
+                <CardContent className="py-4">
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => toggleComplete(plan.id, plan.status)}
+                      disabled={isAdmin}
+                      className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0 disabled:cursor-default disabled:hover:text-muted-foreground"
+                    >
+                      {plan.status === 'completed' ? (
+                        <CheckCircle2 className="h-5 w-5 text-green-500" />
+                      ) : (
+                        <Circle className="h-5 w-5" />
                       )}
-                    </div>
-                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                      {plan.tags.map((tag) => (
+                    </button>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-mono text-muted-foreground">
+                          #{plan.lc_number}
+                        </span>
                         <span
-                          key={tag}
-                          className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full"
+                          className={`font-medium ${plan.status === 'completed' ? 'line-through text-muted-foreground' : ''}`}
                         >
-                          {tag}
+                          {plan.title}
                         </span>
-                      ))}
-                      {plan.target_date && (
-                        <span className="text-xs text-muted-foreground">
-                          目标：{plan.target_date}
-                        </span>
-                      )}
+                        <Badge variant={plan.difficulty as 'easy' | 'medium' | 'hard'}>
+                          {DIFFICULTY_LABELS[plan.difficulty]}
+                        </Badge>
+                        {isAdmin && plan.status === 'in_progress' && (
+                          <Badge variant="secondary">进行中</Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        {plan.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                        {plan.target_date && (
+                          <span className="text-xs text-muted-foreground">
+                            目标：{plan.target_date}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
 
-                  {!isAdmin && (
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      {plan.status !== 'completed' && plan.status !== 'in_progress' && (
+                    {!isAdmin && (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {plan.status !== 'completed' && plan.status !== 'in_progress' && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              updateStatus.mutate({ id: plan.id, status: 'in_progress' })
+                            }
+                            className="text-xs"
+                          >
+                            开始
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
-                          size="sm"
-                          onClick={() => updateStatus(plan.id, 'in_progress')}
-                          className="text-xs"
+                          size="icon"
+                          onClick={() => deletePlan.mutate(plan.id)}
+                          className="text-muted-foreground hover:text-destructive"
                         >
-                          开始
+                          <Trash2 className="h-4 w-4" />
                         </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => deletePlan(plan.id)}
-                        className="text-muted-foreground hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
         </div>
       </main>
 
@@ -329,9 +321,14 @@ export default function PlanPage() {
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button>
-              <Button onClick={addPlan} disabled={saving || !form.lc_number || !form.title}>
-                {saving ? '保存中...' : '添加'}
+              <Button variant="outline" onClick={() => setDialogOpen(false)}>
+                取消
+              </Button>
+              <Button
+                onClick={addPlan}
+                disabled={createPlan.isPending || !form.lc_number || !form.title}
+              >
+                {createPlan.isPending ? '保存中...' : '添加'}
               </Button>
             </DialogFooter>
           </DialogContent>
