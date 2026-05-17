@@ -1,16 +1,51 @@
 -- 在 Supabase SQL Editor 中执行此文件
+-- 如果之前已经创建过表，先 DROP（注意会清空数据）：
+-- drop table if exists public.checkin_replies cascade;
+-- drop table if exists public.checkins cascade;
+-- drop table if exists public.plans cascade;
+-- drop table if exists public.profiles cascade;
 
--- 打卡记录表
+-- ========== 用户档案（区分 owner 和 admin） ==========
+create table if not exists public.profiles (
+  user_id uuid references auth.users(id) on delete cascade primary key,
+  display_name text,
+  role text check (role in ('owner', 'admin')) not null,
+  created_at timestamptz default now() not null
+);
+
+-- 辅助函数：当前用户的角色
+create or replace function public.current_user_role()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select role from public.profiles where user_id = auth.uid();
+$$;
+
+-- 辅助函数：owner 的 user_id（用于 admin 查询 owner 的数据）
+create or replace function public.owner_user_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select user_id from public.profiles where role = 'owner' limit 1;
+$$;
+
+-- ========== 打卡记录（只有 owner 拥有） ==========
 create table if not exists public.checkins (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references auth.users(id) on delete cascade not null,
   date date not null,
   note text,
   created_at timestamptz default now() not null,
-  unique(user_id, date)  -- 每人每天只能打一次卡
+  unique(user_id, date)
 );
 
--- 题目计划表
+-- ========== 题目计划（只有 owner 拥有） ==========
 create table if not exists public.plans (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references auth.users(id) on delete cascade not null,
@@ -25,21 +60,116 @@ create table if not exists public.plans (
   created_at timestamptz default now() not null
 );
 
--- 开启 RLS（行级安全）
+-- ========== 打卡回复（admin 在 owner 的打卡下留言） ==========
+create table if not exists public.checkin_replies (
+  id uuid default gen_random_uuid() primary key,
+  checkin_id uuid references public.checkins(id) on delete cascade not null,
+  author_id uuid references auth.users(id) on delete cascade not null,
+  content text not null,
+  created_at timestamptz default now() not null
+);
+
+-- ========== RLS 启用 ==========
+alter table public.profiles enable row level security;
 alter table public.checkins enable row level security;
 alter table public.plans enable row level security;
+alter table public.checkin_replies enable row level security;
 
--- RLS 策略：只能操作自己的数据
-create policy "Users can manage their own checkins"
+-- ========== profiles 策略 ==========
+-- 登录用户可以看到所有 profiles（用于显示对方昵称）
+create policy "Authenticated users can read profiles"
+  on public.profiles for select
+  to authenticated using (true);
+
+-- 只允许用户自己更新自己的 profile（昵称等）
+create policy "Users can update own profile"
+  on public.profiles for update
+  to authenticated using (auth.uid() = user_id);
+
+-- ========== checkins 策略 ==========
+-- owner 完全控制自己的打卡
+create policy "Owner can manage own checkins"
   on public.checkins for all
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
+  to authenticated
+  using (auth.uid() = user_id and public.current_user_role() = 'owner')
+  with check (auth.uid() = user_id and public.current_user_role() = 'owner');
 
-create policy "Users can manage their own plans"
+-- admin 可以读 owner 的打卡
+create policy "Admin can read owner's checkins"
+  on public.checkins for select
+  to authenticated
+  using (public.current_user_role() = 'admin' and user_id = public.owner_user_id());
+
+-- ========== plans 策略 ==========
+-- owner 完全控制自己的计划
+create policy "Owner can manage own plans"
   on public.plans for all
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
+  to authenticated
+  using (auth.uid() = user_id and public.current_user_role() = 'owner')
+  with check (auth.uid() = user_id and public.current_user_role() = 'owner');
 
--- 索引
-create index checkins_user_date on public.checkins(user_id, date);
-create index plans_user_status on public.plans(user_id, status);
+-- admin 可以读 owner 的计划
+create policy "Admin can read owner's plans"
+  on public.plans for select
+  to authenticated
+  using (public.current_user_role() = 'admin' and user_id = public.owner_user_id());
+
+-- ========== checkin_replies 策略 ==========
+-- admin 可以增删改自己的回复
+create policy "Admin can manage own replies"
+  on public.checkin_replies for all
+  to authenticated
+  using (public.current_user_role() = 'admin' and auth.uid() = author_id)
+  with check (public.current_user_role() = 'admin' and auth.uid() = author_id);
+
+-- owner 可以读所有回复（看 admin 给她的留言）
+create policy "Owner can read replies on own checkins"
+  on public.checkin_replies for select
+  to authenticated
+  using (
+    public.current_user_role() = 'owner'
+    and exists (
+      select 1 from public.checkins
+      where checkins.id = checkin_replies.checkin_id
+        and checkins.user_id = auth.uid()
+    )
+  );
+
+-- admin 也可以读自己的回复
+create policy "Admin can read own replies"
+  on public.checkin_replies for select
+  to authenticated
+  using (public.current_user_role() = 'admin' and auth.uid() = author_id);
+
+-- ========== 索引 ==========
+create index if not exists checkins_user_date on public.checkins(user_id, date desc);
+create index if not exists plans_user_status on public.plans(user_id, status);
+create index if not exists replies_checkin on public.checkin_replies(checkin_id, created_at);
+
+-- ========== 注册后自动建 profile 的触发器 ==========
+-- 默认所有新用户为 owner。注册完两个用户后，手动把你自己改成 admin（见下方说明）。
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.profiles (user_id, display_name, role)
+  values (new.id, split_part(new.email, '@', 1), 'owner');
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- ========== 部署后手动配置角色 ==========
+-- 1. 让你的女朋友先用她的邮箱注册（她会自动成为 owner）
+-- 2. 你自己再用 jackz021207@gmail.com 注册
+-- 3. 注册完两个账号后，在 SQL Editor 跑下面这条把自己改成 admin：
+--
+-- update public.profiles set role = 'admin'
+-- where user_id = (select id from auth.users where email = 'jackz021207@gmail.com');

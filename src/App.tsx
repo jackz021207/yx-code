@@ -3,10 +3,17 @@ import { useAuth } from '@/hooks/useAuth'
 import Login from '@/pages/Login'
 import Dashboard from '@/pages/Dashboard'
 import PlanPage from '@/pages/PlanPage'
+import Diary from '@/pages/Diary'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-muted-foreground">加载中...</div>
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-muted-foreground">
+        加载中...
+      </div>
+    )
+  }
   if (!user) return <Navigate to="/login" replace />
   return <>{children}</>
 }
@@ -29,6 +36,14 @@ export default function App() {
           element={
             <ProtectedRoute>
               <PlanPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/diary"
+          element={
+            <ProtectedRoute>
+              <Diary />
             </ProtectedRoute>
           }
         />

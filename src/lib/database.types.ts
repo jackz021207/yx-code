@@ -1,9 +1,31 @@
 export type Difficulty = 'easy' | 'medium' | 'hard'
 export type PlanStatus = 'todo' | 'in_progress' | 'completed'
+export type Role = 'owner' | 'admin'
 
 export interface Database {
   public: {
     Tables: {
+      profiles: {
+        Row: {
+          user_id: string
+          display_name: string | null
+          role: Role
+          created_at: string
+        }
+        Insert: {
+          user_id: string
+          display_name?: string | null
+          role: Role
+          created_at?: string
+        }
+        Update: {
+          user_id?: string
+          display_name?: string | null
+          role?: Role
+          created_at?: string
+        }
+        Relationships: []
+      }
       checkins: {
         Row: {
           id: string
@@ -70,6 +92,30 @@ export interface Database {
         }
         Relationships: []
       }
+      checkin_replies: {
+        Row: {
+          id: string
+          checkin_id: string
+          author_id: string
+          content: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          checkin_id: string
+          author_id: string
+          content: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          checkin_id?: string
+          author_id?: string
+          content?: string
+          created_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: Record<never, never>
     Functions: Record<never, never>
@@ -78,5 +124,7 @@ export interface Database {
   }
 }
 
+export type Profile = Database['public']['Tables']['profiles']['Row']
 export type Checkin = Database['public']['Tables']['checkins']['Row']
 export type Plan = Database['public']['Tables']['plans']['Row']
+export type CheckinReply = Database['public']['Tables']['checkin_replies']['Row']
