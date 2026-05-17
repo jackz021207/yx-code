@@ -50,9 +50,6 @@ export default function Dashboard() {
   const isAdmin = role === 'admin'
   const ownerName = ownerProfileQ.data?.display_name ?? '她'
 
-  // 初始加载（找 owner）
-  const initialLoading = ownerProfileQ.isPending
-
   async function handleCheckin() {
     if (!user || todayCheckinQ.data || role !== 'owner') return
     await createCheckin.mutateAsync({
@@ -104,6 +101,17 @@ export default function Dashboard() {
       </header>
 
       <main className="max-w-4xl mx-auto p-6 space-y-6">
+        {/* owner 不存在时，不渲染主内容，直接显示警告 */}
+        {!ownerProfileQ.isPending && !ownerProfileQ.data ? (
+          <Card className="border-yellow-300 bg-yellow-50">
+            <CardContent className="pt-6">
+              <p className="text-sm text-yellow-800">
+                还没有 owner 用户。请让女朋友先注册账号，她会自动成为 owner。
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <>
         {/* 统计卡片 */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatCard
@@ -263,15 +271,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* owner 未配置提示（只在所有查询都完成且确实没找到 owner 时显示） */}
-        {!initialLoading && !ownerProfileQ.data && (
-          <Card className="border-yellow-300 bg-yellow-50">
-            <CardContent className="pt-6">
-              <p className="text-sm text-yellow-800">
-                还没有 owner 用户。请让女朋友先注册账号，她会自动成为 owner。
-              </p>
-            </CardContent>
-          </Card>
+          </>
         )}
       </main>
     </div>

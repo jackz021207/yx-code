@@ -62,6 +62,14 @@ export default function Diary() {
       </header>
 
       <main className="max-w-2xl mx-auto p-6 space-y-4">
+        {!ownerProfileQ.isPending && !ownerProfileQ.data ? (
+          <Card className="border-yellow-300 bg-yellow-50">
+            <CardContent className="pt-6">
+              <p className="text-sm text-yellow-800">还没有 owner 用户。</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <>
         {loading && (
           <>
             <Skeleton className="h-32 w-full" />
@@ -162,6 +170,8 @@ export default function Diary() {
               </CardContent>
             </Card>
           ))}
+          </>
+        )}
       </main>
     </div>
   )

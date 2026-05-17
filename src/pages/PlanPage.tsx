@@ -119,6 +119,16 @@ export default function PlanPage() {
       </header>
 
       <main className="max-w-3xl mx-auto p-6 space-y-6">
+        {!ownerProfileQ.isPending && !ownerProfileQ.data ? (
+          <Card className="border-yellow-300 bg-yellow-50">
+            <CardContent className="pt-6">
+              <p className="text-sm text-yellow-800">
+                还没有 owner 用户。
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <>
         <Card>
           <CardHeader>
             <CardTitle className="text-base">总体进度</CardTitle>
@@ -251,6 +261,8 @@ export default function PlanPage() {
               </Card>
             ))}
         </div>
+          </>
+        )}
       </main>
 
       {!isAdmin && (
