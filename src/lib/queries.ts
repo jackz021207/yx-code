@@ -1,6 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import type { Checkin, CheckinReply, Plan, PlanStatus, Profile } from '@/lib/database.types'
+import type {
+  Checkin,
+  CheckinReply,
+  Plan,
+  PlanStatus,
+  Profile,
+  Topic,
+} from '@/lib/database.types'
 
 // 统一 query key 工厂，避免拼写错误
 export const qk = {
@@ -12,6 +19,81 @@ export const qk = {
   recentPlans: ['recent-plans'] as const,
   allPlans: ['all-plans'] as const,
   diary: ['diary'] as const,
+  topics: ['topics'] as const,
+}
+
+// ========== Topics ==========
+
+export function useTopics() {
+  return useQuery({
+    queryKey: qk.topics,
+    queryFn: async (): Promise<Topic[]> => {
+      const { data, error } = await supabase
+        .from('topics')
+        .select('*')
+        .order('sort_order', { ascending: true })
+        .order('name', { ascending: true })
+      if (error) throw error
+      return data ?? []
+    },
+  })
+}
+
+export function useCreateTopic() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { name: string; sort_order?: number }) => {
+      const { data, error } = await supabase
+        .from('topics')
+        .insert({ name: input.name, sort_order: input.sort_order ?? 0 })
+        .select()
+        .single()
+      if (error) throw error
+      return data
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.topics })
+    },
+  })
+}
+
+export function useUpdateTopic() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { id: string; name?: string; sort_order?: number }) => {
+      const { id, ...patch } = input
+      const { data, error } = await supabase
+        .from('topics')
+        .update(patch)
+        .eq('id', id)
+        .select()
+        .single()
+      if (error) throw error
+      return data
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.topics })
+      // topic 名变了，plan 列表显示也要刷新
+      qc.invalidateQueries({ queryKey: qk.allPlans })
+      qc.invalidateQueries({ queryKey: qk.recentPlans })
+    },
+  })
+}
+
+export function useDeleteTopic() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('topics').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.topics })
+      // plans.topic_id 会被 DB 设为 null，刷新列表
+      qc.invalidateQueries({ queryKey: qk.allPlans })
+      qc.invalidateQueries({ queryKey: qk.recentPlans })
+    },
+  })
 }
 
 // ========== 查询 ==========
@@ -191,6 +273,7 @@ export function useCreatePlan() {
   return useMutation({
     mutationFn: async (input: {
       userId: string
+      topic_id: string | null
       lc_number: number
       title: string
       difficulty: 'easy' | 'medium' | 'hard'
@@ -202,6 +285,7 @@ export function useCreatePlan() {
         .from('plans')
         .insert({
           user_id: input.userId,
+          topic_id: input.topic_id,
           lc_number: input.lc_number,
           title: input.title,
           difficulty: input.difficulty,
@@ -211,6 +295,36 @@ export function useCreatePlan() {
           note: input.note,
           completed_at: null,
         })
+        .select()
+        .single()
+      if (error) throw error
+      return data
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.allPlans })
+      qc.invalidateQueries({ queryKey: qk.recentPlans })
+    },
+  })
+}
+
+export function useUpdatePlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: {
+      id: string
+      topic_id?: string | null
+      lc_number?: number
+      title?: string
+      difficulty?: 'easy' | 'medium' | 'hard'
+      tags?: string[]
+      target_date?: string | null
+      note?: string | null
+    }) => {
+      const { id, ...patch } = input
+      const { data, error } = await supabase
+        .from('plans')
+        .update(patch)
+        .eq('id', id)
         .select()
         .single()
       if (error) throw error

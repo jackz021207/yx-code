@@ -9,15 +9,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Code2 } from 'lucide-react'
 
 export default function Login() {
-  const { user, loading } = useAuth()
+  const { user, role, loading, profileLoading } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [isSignUp, setIsSignUp] = useState(false)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  if (loading) return null
-  if (user) return <Navigate to="/dashboard" replace />
+  if (loading || (user && profileLoading)) return null
+  if (user) {
+    return <Navigate to={role === 'admin' ? '/admin/dashboard' : '/dashboard'} replace />
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

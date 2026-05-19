@@ -1,10 +1,9 @@
-import { useState, useMemo } from 'react'
+import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Flame,
@@ -14,6 +13,8 @@ import {
   LogOut,
   Heart,
   BookOpen,
+  MessageCircle,
+  ListChecks,
 } from 'lucide-react'
 import {
   useOwnerProfile,
@@ -24,13 +25,11 @@ import {
   useRecentPlans,
   useAllPlans,
   useTopics,
-  useCreateCheckin,
 } from '@/lib/queries'
 import { TopicProgress } from '@/components/TopicProgress'
 
-export default function Dashboard() {
-  const { user, signOut } = useAuth()
-  const [note, setNote] = useState('')
+export default function AdminDashboard() {
+  const { signOut } = useAuth()
 
   const today = new Date().toISOString().split('T')[0]
   const monthStart = today.slice(0, 7) + '-01'
@@ -46,20 +45,9 @@ export default function Dashboard() {
   const allPlansQ = useAllPlans(ownerId)
   const topicsQ = useTopics()
 
-  const createCheckin = useCreateCheckin()
-
   const streak = useMemo(() => calcStreak(allDatesQ.data ?? []), [allDatesQ.data])
   const totalCheckins = allDatesQ.data?.length ?? 0
-
-  async function handleCheckin() {
-    if (!user || todayCheckinQ.data) return
-    await createCheckin.mutateAsync({
-      userId: user.id,
-      date: today,
-      note: note || null,
-    })
-    setNote('')
-  }
+  const ownerName = ownerProfileQ.data?.display_name ?? '她'
 
   const difficultyVariant: Record<string, 'easy' | 'medium' | 'hard'> = {
     easy: 'easy',
@@ -74,17 +62,25 @@ export default function Dashboard() {
           <div className="bg-primary rounded-lg p-2">
             <Trophy className="h-5 w-5 text-primary-foreground" />
           </div>
-          <h1 className="text-xl font-bold">LeetCode Tracker</h1>
+          <div>
+            <h1 className="text-xl font-bold">陪伴台</h1>
+            <p className="text-xs text-muted-foreground">
+              正在查看 {ownerName} 的进度
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
-          <Link to="/diary">
+          <Link to="/admin/diary">
             <Button variant="outline" size="sm">
               <BookOpen className="h-4 w-4 mr-1" />
-              打卡日记
+              日记 & 留言
             </Button>
           </Link>
-          <Link to="/plan">
-            <Button variant="outline" size="sm">我的计划</Button>
+          <Link to="/admin/plan">
+            <Button variant="outline" size="sm">
+              <ListChecks className="h-4 w-4 mr-1" />
+              排题
+            </Button>
           </Link>
           <Button variant="ghost" size="icon" onClick={signOut}>
             <LogOut className="h-4 w-4" />
@@ -97,7 +93,7 @@ export default function Dashboard() {
           <Card className="border-yellow-300 bg-yellow-50">
             <CardContent className="pt-6">
               <p className="text-sm text-yellow-800">
-                还没有 owner 用户。
+                还没有 owner 用户。请让她先注册账号，她会自动成为 owner。
               </p>
             </CardContent>
           </Card>
@@ -138,7 +134,7 @@ export default function Dashboard() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <CheckCircle2 className="h-5 w-5" />
-                  今日打卡
+                  {ownerName} 的今日打卡
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -152,7 +148,9 @@ export default function Dashboard() {
                     <div className="flex items-start gap-3">
                       <CheckCircle2 className="h-6 w-6 text-green-500 flex-shrink-0 mt-0.5" />
                       <div className="flex-1">
-                        <p className="font-medium text-green-600">今天已打卡！</p>
+                        <p className="font-medium text-green-600">
+                          {ownerName} 今天打卡了
+                        </p>
                         {todayCheckinQ.data.note && (
                           <p className="text-sm mt-1 whitespace-pre-wrap">
                             {todayCheckinQ.data.note}
@@ -173,23 +171,18 @@ export default function Dashboard() {
                         ))}
                       </div>
                     )}
+
+                    <Link to="/admin/diary">
+                      <Button variant="outline" size="sm" className="w-full">
+                        <MessageCircle className="h-4 w-4 mr-1" />
+                        去日记给 TA 留言
+                      </Button>
+                    </Link>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    <Textarea
-                      placeholder="今天刷了哪些题？有什么收获？（可选）"
-                      value={note}
-                      onChange={(e) => setNote(e.target.value)}
-                      rows={3}
-                    />
-                    <Button
-                      onClick={handleCheckin}
-                      disabled={createCheckin.isPending}
-                      className="w-full"
-                    >
-                      {createCheckin.isPending ? '打卡中...' : '立即打卡'}
-                    </Button>
-                  </div>
+                  <p className="text-muted-foreground text-sm py-2">
+                    {ownerName} 今天还没打卡哦
+                  </p>
                 )}
               </CardContent>
             </Card>
@@ -198,13 +191,14 @@ export default function Dashboard() {
               topics={topicsQ.data ?? []}
               plans={allPlansQ.data ?? []}
               loading={allPlansQ.isPending || topicsQ.isPending}
+              title={`${ownerName} 的 Topic 进度`}
             />
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle>待完成计划</CardTitle>
-                <Link to="/plan">
-                  <Button variant="ghost" size="sm">查看全部</Button>
+                <CardTitle>{ownerName} 的待完成计划</CardTitle>
+                <Link to="/admin/plan">
+                  <Button variant="ghost" size="sm">去排题</Button>
                 </Link>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -232,6 +226,9 @@ export default function Dashboard() {
                             ? '中等'
                             : '困难'}
                         </Badge>
+                        {plan.status === 'in_progress' && (
+                          <Badge variant="secondary">进行中</Badge>
+                        )}
                       </div>
                       {plan.target_date && (
                         <span className="text-xs text-muted-foreground flex-shrink-0 ml-2">
@@ -242,7 +239,7 @@ export default function Dashboard() {
                   ))
                 ) : (
                   <p className="text-sm text-muted-foreground text-center py-4">
-                    还没有题目，去计划页添加吧
+                    {ownerName} 暂无待完成题目，去排几道吧
                   </p>
                 )}
               </CardContent>

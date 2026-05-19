@@ -1,14 +1,22 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
+import type { Role } from '@/lib/database.types'
 import Login from '@/pages/Login'
 import Dashboard from '@/pages/Dashboard'
 import PlanPage from '@/pages/PlanPage'
 import Diary from '@/pages/Diary'
+import AdminDashboard from '@/pages/admin/AdminDashboard'
+import AdminPlanPage from '@/pages/admin/AdminPlanPage'
+import AdminDiary from '@/pages/admin/AdminDiary'
 
-
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading, profileLoading } = useAuth()
-  // 等 session 确定 + profile 加载完，避免页面用 role=null 短暂渲染
+function ProtectedRoute({
+  children,
+  requireRole,
+}: {
+  children: React.ReactNode
+  requireRole: Role
+}) {
+  const { user, role, loading, profileLoading } = useAuth()
   if (loading || (user && profileLoading)) {
     return (
       <div className="min-h-screen flex items-center justify-center text-muted-foreground">
@@ -17,6 +25,10 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     )
   }
   if (!user) return <Navigate to="/login" replace />
+  // 角色不匹配时，把用户送回自己应该看到的入口
+  if (role && role !== requireRole) {
+    return <Navigate to={role === 'admin' ? '/admin/dashboard' : '/dashboard'} replace />
+  }
   return <>{children}</>
 }
 
@@ -25,10 +37,12 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+
+        {/* owner 路由 */}
         <Route
           path="/dashboard"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requireRole="owner">
               <Dashboard />
             </ProtectedRoute>
           }
@@ -36,7 +50,7 @@ export default function App() {
         <Route
           path="/plan"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requireRole="owner">
               <PlanPage />
             </ProtectedRoute>
           }
@@ -44,13 +58,54 @@ export default function App() {
         <Route
           path="/diary"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requireRole="owner">
               <Diary />
             </ProtectedRoute>
           }
         />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+
+        {/* admin 路由 */}
+        <Route
+          path="/admin/dashboard"
+          element={
+            <ProtectedRoute requireRole="admin">
+              <AdminDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/plan"
+          element={
+            <ProtectedRoute requireRole="admin">
+              <AdminPlanPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/diary"
+          element={
+            <ProtectedRoute requireRole="admin">
+              <AdminDiary />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route path="*" element={<RoleHome />} />
       </Routes>
     </BrowserRouter>
   )
+}
+
+// 兜底：未登录跳 /login，已登录按 role 跳到对应首页
+function RoleHome() {
+  const { user, role, loading, profileLoading } = useAuth()
+  if (loading || (user && profileLoading)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-muted-foreground">
+        加载中...
+      </div>
+    )
+  }
+  if (!user) return <Navigate to="/login" replace />
+  return <Navigate to={role === 'admin' ? '/admin/dashboard' : '/dashboard'} replace />
 }

@@ -54,6 +54,7 @@ export interface Database {
         Row: {
           id: string
           user_id: string
+          topic_id: string | null
           lc_number: number
           title: string
           difficulty: Difficulty
@@ -67,6 +68,7 @@ export interface Database {
         Insert: {
           id?: string
           user_id: string
+          topic_id?: string | null
           lc_number: number
           title: string
           difficulty: Difficulty
@@ -80,6 +82,7 @@ export interface Database {
         Update: {
           id?: string
           user_id?: string
+          topic_id?: string | null
           lc_number?: number
           title?: string
           difficulty?: Difficulty
@@ -88,6 +91,27 @@ export interface Database {
           status?: PlanStatus
           note?: string | null
           completed_at?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      topics: {
+        Row: {
+          id: string
+          name: string
+          sort_order: number
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          sort_order?: number
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          sort_order?: number
           created_at?: string
         }
         Relationships: []
@@ -128,3 +152,4 @@ export type Profile = Database['public']['Tables']['profiles']['Row']
 export type Checkin = Database['public']['Tables']['checkins']['Row']
 export type Plan = Database['public']['Tables']['plans']['Row']
 export type CheckinReply = Database['public']['Tables']['checkin_replies']['Row']
+export type Topic = Database['public']['Tables']['topics']['Row']

@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -17,15 +16,31 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
-import type { Difficulty, PlanStatus, Topic } from '@/lib/database.types'
-import { Plus, CheckCircle2, Circle, ArrowLeft, Trash2 } from 'lucide-react'
+import type { Difficulty, Plan, PlanStatus, Topic } from '@/lib/database.types'
+import {
+  Plus,
+  CheckCircle2,
+  Circle,
+  ArrowLeft,
+  Trash2,
+  Pencil,
+  PlayCircle,
+  PauseCircle,
+  Tags,
+  X,
+  Check,
+} from 'lucide-react'
 import {
   useOwnerProfile,
   useAllPlans,
   useCreatePlan,
+  useUpdatePlan,
   useUpdatePlanStatus,
   useDeletePlan,
   useTopics,
+  useCreateTopic,
+  useUpdateTopic,
+  useDeleteTopic,
 } from '@/lib/queries'
 import { TopicFilter, type TopicFilterValue } from '@/components/TopicFilter'
 import { TopicProgress } from '@/components/TopicProgress'
@@ -42,22 +57,33 @@ const STATUS_LABELS: Record<PlanStatus, string> = {
   completed: '已完成',
 }
 
-const defaultForm = {
+type FormState = {
+  lc_number: string
+  title: string
+  difficulty: Difficulty
+  topic_id: string // '' 表示未分类
+  tags: string
+  target_date: string
+  note: string
+}
+
+const defaultForm: FormState = {
   lc_number: '',
   title: '',
-  difficulty: 'medium' as Difficulty,
+  difficulty: 'medium',
   topic_id: '',
   tags: '',
   target_date: '',
   note: '',
 }
 
-export default function PlanPage() {
-  const { user } = useAuth()
+export default function AdminPlanPage() {
   const [statusFilter, setStatusFilter] = useState<PlanStatus | 'all'>('all')
   const [topicFilter, setTopicFilter] = useState<TopicFilterValue>('all')
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [form, setForm] = useState(defaultForm)
+  const [topicMgrOpen, setTopicMgrOpen] = useState(false)
+  const [editing, setEditing] = useState<Plan | null>(null)
+  const [form, setForm] = useState<FormState>(defaultForm)
 
   const ownerProfileQ = useOwnerProfile()
   const ownerId = ownerProfileQ.data?.user_id
@@ -65,6 +91,7 @@ export default function PlanPage() {
   const topicsQ = useTopics()
 
   const createPlan = useCreatePlan()
+  const updatePlan = useUpdatePlan()
   const updateStatus = useUpdatePlanStatus()
   const deletePlan = useDeletePlan()
 
@@ -91,46 +118,90 @@ export default function PlanPage() {
 
   const completed = plans.filter((p) => p.status === 'completed').length
   const progress = plans.length > 0 ? Math.round((completed / plans.length) * 100) : 0
+  const ownerName = ownerProfileQ.data?.display_name ?? '她'
 
-  async function addPlan() {
-    if (!user || !form.lc_number || !form.title) return
-    await createPlan.mutateAsync({
-      userId: user.id,
-      topic_id: form.topic_id || null,
-      lc_number: parseInt(form.lc_number),
-      title: form.title,
-      difficulty: form.difficulty,
-      tags: form.tags ? form.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
-      target_date: form.target_date || null,
-      note: form.note || null,
+  function openCreate() {
+    setEditing(null)
+    setForm(defaultForm)
+    setDialogOpen(true)
+  }
+
+  function openEdit(plan: Plan) {
+    setEditing(plan)
+    setForm({
+      lc_number: String(plan.lc_number),
+      title: plan.title,
+      difficulty: plan.difficulty,
+      topic_id: plan.topic_id ?? '',
+      tags: plan.tags.join(', '),
+      target_date: plan.target_date ?? '',
+      note: plan.note ?? '',
     })
+    setDialogOpen(true)
+  }
+
+  async function submitForm() {
+    if (!form.lc_number || !form.title) return
+    const tags = form.tags ? form.tags.split(',').map((t) => t.trim()).filter(Boolean) : []
+    const lc = parseInt(form.lc_number)
+    const topic_id = form.topic_id || null
+
+    if (editing) {
+      await updatePlan.mutateAsync({
+        id: editing.id,
+        topic_id,
+        lc_number: lc,
+        title: form.title,
+        difficulty: form.difficulty,
+        tags,
+        target_date: form.target_date || null,
+        note: form.note || null,
+      })
+    } else {
+      if (!ownerId) return
+      await createPlan.mutateAsync({
+        userId: ownerId,
+        topic_id,
+        lc_number: lc,
+        title: form.title,
+        difficulty: form.difficulty,
+        tags,
+        target_date: form.target_date || null,
+        note: form.note || null,
+      })
+    }
     setDialogOpen(false)
+    setEditing(null)
     setForm(defaultForm)
   }
 
-  function toggleComplete(id: string, currentStatus: PlanStatus) {
-    updateStatus.mutate({
-      id,
-      status: currentStatus === 'completed' ? 'todo' : 'completed',
-    })
-  }
-
+  const submitting = createPlan.isPending || updatePlan.isPending
   const loading = plansQ.isPending
 
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Link to="/dashboard">
+          <Link to="/admin/dashboard">
             <Button variant="ghost" size="icon">
               <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>
-          <h1 className="text-xl font-bold">我的刷题计划</h1>
+          <div>
+            <h1 className="text-xl font-bold">为 {ownerName} 排题</h1>
+            <p className="text-xs text-muted-foreground">
+              你添加的题目会出现在她的计划里
+            </p>
+          </div>
         </div>
-        <Button onClick={() => setDialogOpen(true)} size="sm">
-          <Plus className="h-4 w-4 mr-1" /> 添加题目
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setTopicMgrOpen(true)}>
+            <Tags className="h-4 w-4 mr-1" /> 管理分类
+          </Button>
+          <Button onClick={openCreate} size="sm" disabled={!ownerId}>
+            <Plus className="h-4 w-4 mr-1" /> 添加题目
+          </Button>
+        </div>
       </header>
 
       <main className="max-w-3xl mx-auto p-6 space-y-6">
@@ -155,7 +226,9 @@ export default function PlanPage() {
                 ) : (
                   <>
                     <div className="flex justify-between text-sm text-muted-foreground">
-                      <span>{completed} / {plans.length} 题已完成</span>
+                      <span>
+                        {completed} / {plans.length} 题已完成
+                      </span>
                       <span>{progress}%</span>
                     </div>
                     <Progress value={progress} className="h-2" />
@@ -204,7 +277,7 @@ export default function PlanPage() {
 
               {!loading && filtered.length === 0 && (
                 <div className="text-center py-12 text-muted-foreground">
-                  还没有题目，点击右上角添加吧
+                  这里还没有题目，点右上角给她排一道吧
                 </div>
               )}
 
@@ -216,8 +289,14 @@ export default function PlanPage() {
                       <CardContent className="py-4">
                         <div className="flex items-center gap-3">
                           <button
-                            onClick={() => toggleComplete(plan.id, plan.status)}
+                            onClick={() =>
+                              updateStatus.mutate({
+                                id: plan.id,
+                                status: plan.status === 'completed' ? 'todo' : 'completed',
+                              })
+                            }
                             className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
+                            title={plan.status === 'completed' ? '标为待做' : '标为完成'}
                           >
                             {plan.status === 'completed' ? (
                               <CheckCircle2 className="h-5 w-5 text-green-500" />
@@ -232,7 +311,11 @@ export default function PlanPage() {
                                 #{plan.lc_number}
                               </span>
                               <span
-                                className={`font-medium ${plan.status === 'completed' ? 'line-through text-muted-foreground' : ''}`}
+                                className={`font-medium ${
+                                  plan.status === 'completed'
+                                    ? 'line-through text-muted-foreground'
+                                    : ''
+                                }`}
                               >
                                 {plan.title}
                               </span>
@@ -262,11 +345,16 @@ export default function PlanPage() {
                                   目标：{plan.target_date}
                                 </span>
                               )}
+                              {plan.note && (
+                                <span className="text-xs text-muted-foreground truncate max-w-[200px]">
+                                  · {plan.note}
+                                </span>
+                              )}
                             </div>
                           </div>
 
                           <div className="flex items-center gap-1 flex-shrink-0">
-                            {plan.status !== 'completed' && plan.status !== 'in_progress' && (
+                            {plan.status === 'todo' && (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -274,15 +362,43 @@ export default function PlanPage() {
                                   updateStatus.mutate({ id: plan.id, status: 'in_progress' })
                                 }
                                 className="text-xs"
+                                title="标为进行中"
                               >
-                                开始
+                                <PlayCircle className="h-4 w-4" />
+                              </Button>
+                            )}
+                            {plan.status === 'in_progress' && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  updateStatus.mutate({ id: plan.id, status: 'todo' })
+                                }
+                                className="text-xs"
+                                title="撤回到待做"
+                              >
+                                <PauseCircle className="h-4 w-4" />
                               </Button>
                             )}
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => deletePlan.mutate(plan.id)}
+                              onClick={() => openEdit(plan)}
+                              className="text-muted-foreground hover:text-primary"
+                              title="编辑"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => {
+                                if (confirm(`删除题目 #${plan.lc_number} ${plan.title}？`)) {
+                                  deletePlan.mutate(plan.id)
+                                }
+                              }}
                               className="text-muted-foreground hover:text-destructive"
+                              title="删除"
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>
@@ -300,8 +416,10 @@ export default function PlanPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>添加题目</DialogTitle>
-            <DialogDescription>填写题目信息，加入你的刷题计划</DialogDescription>
+            <DialogTitle>{editing ? '编辑题目' : '添加题目'}</DialogTitle>
+            <DialogDescription>
+              {editing ? `修改 #${editing.lc_number} 的信息` : `给 ${ownerName} 加一道新题`}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
@@ -353,7 +471,7 @@ export default function PlanPage() {
               </select>
               {topics.length === 0 && (
                 <p className="text-xs text-muted-foreground">
-                  还没有分类，让 TA 在 admin 端建一些吧
+                  还没有分类，点击右上角"管理分类"添加
                 </p>
               )}
             </div>
@@ -376,7 +494,7 @@ export default function PlanPage() {
             <div className="space-y-1.5">
               <Label>备注（可选）</Label>
               <Textarea
-                placeholder="思路、注意事项..."
+                placeholder="思路、注意事项、想让她重点关注什么..."
                 value={form.note}
                 onChange={(e) => setForm({ ...form, note: e.target.value })}
                 rows={2}
@@ -388,14 +506,193 @@ export default function PlanPage() {
               取消
             </Button>
             <Button
-              onClick={addPlan}
-              disabled={createPlan.isPending || !form.lc_number || !form.title}
+              onClick={submitForm}
+              disabled={submitting || !form.lc_number || !form.title}
             >
-              {createPlan.isPending ? '保存中...' : '添加'}
+              {submitting ? '保存中...' : editing ? '保存' : '添加'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <TopicManagerDialog
+        open={topicMgrOpen}
+        onOpenChange={setTopicMgrOpen}
+        topics={topics}
+        usedTopicIds={usedTopicIds}
+      />
     </div>
+  )
+}
+
+function TopicManagerDialog({
+  open,
+  onOpenChange,
+  topics,
+  usedTopicIds,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  topics: Topic[]
+  usedTopicIds: Set<string>
+}) {
+  const [newName, setNewName] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
+
+  const createTopic = useCreateTopic()
+  const updateTopic = useUpdateTopic()
+  const deleteTopic = useDeleteTopic()
+
+  async function addTopic() {
+    const name = newName.trim()
+    if (!name) return
+    if (topics.some((t) => t.name === name)) {
+      alert('已有同名分类')
+      return
+    }
+    await createTopic.mutateAsync({ name, sort_order: topics.length })
+    setNewName('')
+  }
+
+  function startEdit(t: Topic) {
+    setEditingId(t.id)
+    setEditingName(t.name)
+  }
+
+  async function saveEdit() {
+    if (!editingId) return
+    const name = editingName.trim()
+    if (!name) return
+    if (topics.some((t) => t.id !== editingId && t.name === name)) {
+      alert('已有同名分类')
+      return
+    }
+    await updateTopic.mutateAsync({ id: editingId, name })
+    setEditingId(null)
+    setEditingName('')
+  }
+
+  async function removeTopic(t: Topic) {
+    const used = usedTopicIds.has(t.id)
+    const confirmMsg = used
+      ? `「${t.name}」下还有题目，删除后这些题会变成未分类。确认删除？`
+      : `确认删除分类「${t.name}」？`
+    if (!confirm(confirmMsg)) return
+    await deleteTopic.mutateAsync(t.id)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>管理 Topic 分类</DialogTitle>
+          <DialogDescription>
+            分类用于把题目按主题归类，例如「动态规划」「双指针」
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex gap-2">
+          <Input
+            placeholder="新分类名称"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') addTopic()
+            }}
+          />
+          <Button
+            onClick={addTopic}
+            disabled={!newName.trim() || createTopic.isPending}
+          >
+            <Plus className="h-4 w-4 mr-1" /> 添加
+          </Button>
+        </div>
+
+        <div className="space-y-2 max-h-96 overflow-y-auto">
+          {topics.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              还没有分类
+            </p>
+          ) : (
+            topics.map((t) => {
+              const isEditing = editingId === t.id
+              const used = usedTopicIds.has(t.id)
+              return (
+                <div
+                  key={t.id}
+                  className="flex items-center gap-2 border rounded-md p-2"
+                >
+                  {isEditing ? (
+                    <>
+                      <Input
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveEdit()
+                          if (e.key === 'Escape') {
+                            setEditingId(null)
+                            setEditingName('')
+                          }
+                        }}
+                        autoFocus
+                      />
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={saveEdit}
+                        disabled={!editingName.trim() || updateTopic.isPending}
+                      >
+                        <Check className="h-4 w-4 text-green-600" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => {
+                          setEditingId(null)
+                          setEditingName('')
+                        }}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="flex-1 text-sm">{t.name}</span>
+                      {used && (
+                        <span className="text-xs text-muted-foreground">使用中</span>
+                      )}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => startEdit(t)}
+                        title="重命名"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => removeTopic(t)}
+                        className="text-muted-foreground hover:text-destructive"
+                        title="删除"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </>
+                  )}
+                </div>
+              )
+            })
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            关闭
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
