@@ -64,7 +64,7 @@ create table if not exists public.plans (
   difficulty text check (difficulty in ('easy', 'medium', 'hard')) not null,
   tags text[] default '{}',
   target_date date,
-  status text check (status in ('todo', 'in_progress', 'completed')) default 'todo' not null,
+  status text check (status in ('todo', 'completed')) default 'todo' not null,
   note text,
   sort_order integer default 0 not null,
   completed_at timestamptz,
@@ -74,6 +74,10 @@ create table if not exists public.plans (
 -- 如果是已有库执行（plans 表已存在但没 topic_id / sort_order），手动补：
 -- alter table public.plans add column if not exists topic_id uuid references public.topics(id) on delete set null;
 -- alter table public.plans add column if not exists sort_order integer default 0 not null;
+-- 把已有 status='in_progress' 数据回退到 'todo'，并收紧 check 约束：
+-- update public.plans set status = 'todo' where status = 'in_progress';
+-- alter table public.plans drop constraint if exists plans_status_check;
+-- alter table public.plans add constraint plans_status_check check (status in ('todo', 'completed'));
 
 -- ========== 打卡回复（admin 在 owner 的打卡下留言） ==========
 create table if not exists public.checkin_replies (

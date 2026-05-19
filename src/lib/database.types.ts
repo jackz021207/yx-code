@@ -1,5 +1,5 @@
 export type Difficulty = 'easy' | 'medium' | 'hard'
-export type PlanStatus = 'todo' | 'in_progress' | 'completed'
+export type PlanStatus = 'todo' | 'completed'
 export type Role = 'owner' | 'admin'
 
 export interface Database {

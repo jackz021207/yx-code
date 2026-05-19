@@ -226,9 +226,6 @@ export default function AdminDashboard() {
                             ? '中等'
                             : '困难'}
                         </Badge>
-                        {plan.status === 'in_progress' && (
-                          <Badge variant="secondary">进行中</Badge>
-                        )}
                       </div>
                       {plan.target_date && (
                         <span className="text-xs text-muted-foreground flex-shrink-0 ml-2">

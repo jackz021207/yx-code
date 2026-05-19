@@ -38,7 +38,6 @@ const DIFFICULTY_LABELS: Record<Difficulty, string> = {
 
 const STATUS_LABELS: Record<PlanStatus, string> = {
   todo: '待做',
-  in_progress: '进行中',
   completed: '已完成',
 }
 
@@ -172,7 +171,7 @@ export default function PlanPage() {
 
             <div className="space-y-3">
               <div className="flex gap-2">
-                {(['all', 'todo', 'in_progress', 'completed'] as const).map((s) => (
+                {(['all', 'todo', 'completed'] as const).map((s) => (
                   <Button
                     key={s}
                     variant={statusFilter === s ? 'default' : 'outline'}
@@ -244,9 +243,6 @@ export default function PlanPage() {
                                   {topic.name}
                                 </Badge>
                               )}
-                              {plan.status === 'in_progress' && (
-                                <Badge variant="secondary">进行中</Badge>
-                              )}
                             </div>
                             <div className="flex items-center gap-2 mt-1 flex-wrap">
                               {plan.tags.map((tag) => (
@@ -266,18 +262,6 @@ export default function PlanPage() {
                           </div>
 
                           <div className="flex items-center gap-1 flex-shrink-0">
-                            {plan.status !== 'completed' && plan.status !== 'in_progress' && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                  updateStatus.mutate({ id: plan.id, status: 'in_progress' })
-                                }
-                                className="text-xs"
-                              >
-                                开始
-                              </Button>
-                            )}
                             <Button
                               variant="ghost"
                               size="icon"

@@ -24,8 +24,6 @@ import {
   ArrowLeft,
   Trash2,
   Pencil,
-  PlayCircle,
-  PauseCircle,
   Tags,
   X,
   Check,
@@ -72,7 +70,6 @@ const DIFFICULTY_LABELS: Record<Difficulty, string> = {
 
 const STATUS_LABELS: Record<PlanStatus, string> = {
   todo: '待做',
-  in_progress: '进行中',
   completed: '已完成',
 }
 
@@ -282,7 +279,7 @@ export default function AdminPlanPage() {
 
             <div className="space-y-3">
               <div className="flex gap-2">
-                {(['all', 'todo', 'in_progress', 'completed'] as const).map((s) => (
+                {(['all', 'todo', 'completed'] as const).map((s) => (
                   <Button
                     key={s}
                     variant={statusFilter === s ? 'default' : 'outline'}
@@ -345,12 +342,6 @@ export default function AdminPlanPage() {
                             id: plan.id,
                             status: plan.status === 'completed' ? 'todo' : 'completed',
                           })
-                        }
-                        onStart={() =>
-                          updateStatus.mutate({ id: plan.id, status: 'in_progress' })
-                        }
-                        onPause={() =>
-                          updateStatus.mutate({ id: plan.id, status: 'todo' })
                         }
                         onEdit={() => openEdit(plan)}
                         onDelete={() => {
@@ -657,8 +648,6 @@ function SortablePlanRow({
   topic,
   dragEnabled,
   onToggleComplete,
-  onStart,
-  onPause,
   onEdit,
   onDelete,
 }: {
@@ -666,8 +655,6 @@ function SortablePlanRow({
   topic: Topic | null
   dragEnabled: boolean
   onToggleComplete: () => void
-  onStart: () => void
-  onPause: () => void
   onEdit: () => void
   onDelete: () => void
 }) {
@@ -740,9 +727,6 @@ function SortablePlanRow({
                     {topic.name}
                   </Badge>
                 )}
-                {plan.status === 'in_progress' && (
-                  <Badge variant="secondary">进行中</Badge>
-                )}
               </div>
               <div className="flex items-center gap-2 mt-1 flex-wrap">
                 {plan.tags.map((tag) => (
@@ -767,28 +751,6 @@ function SortablePlanRow({
             </div>
 
             <div className="flex items-center gap-1 flex-shrink-0">
-              {plan.status === 'todo' && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={onStart}
-                  className="text-xs"
-                  title="标为进行中"
-                >
-                  <PlayCircle className="h-4 w-4" />
-                </Button>
-              )}
-              {plan.status === 'in_progress' && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={onPause}
-                  className="text-xs"
-                  title="撤回到待做"
-                >
-                  <PauseCircle className="h-4 w-4" />
-                </Button>
-              )}
               <Button
                 variant="ghost"
                 size="icon"
