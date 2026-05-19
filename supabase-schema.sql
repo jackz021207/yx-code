@@ -54,7 +54,7 @@ create table if not exists public.topics (
   created_at timestamptz default now() not null
 );
 
--- ========== 题目计划（只有 owner 拥有；topic 由 admin 维护） ==========
+-- ========== 题目计划（只有 owner 拥有；topic 由 admin 维护；admin 决定 sort_order） ==========
 create table if not exists public.plans (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references auth.users(id) on delete cascade not null,
@@ -66,12 +66,14 @@ create table if not exists public.plans (
   target_date date,
   status text check (status in ('todo', 'in_progress', 'completed')) default 'todo' not null,
   note text,
+  sort_order integer default 0 not null,
   completed_at timestamptz,
   created_at timestamptz default now() not null
 );
 
--- 如果是已有库执行（plans 表已存在但没 topic_id），手动补：
+-- 如果是已有库执行（plans 表已存在但没 topic_id / sort_order），手动补：
 -- alter table public.plans add column if not exists topic_id uuid references public.topics(id) on delete set null;
+-- alter table public.plans add column if not exists sort_order integer default 0 not null;
 
 -- ========== 打卡回复（admin 在 owner 的打卡下留言） ==========
 create table if not exists public.checkin_replies (
@@ -175,6 +177,7 @@ create policy "Admin can manage topics"
 create index if not exists checkins_user_date on public.checkins(user_id, date desc);
 create index if not exists plans_user_status on public.plans(user_id, status);
 create index if not exists plans_topic on public.plans(topic_id);
+create index if not exists plans_sort on public.plans(user_id, sort_order);
 create index if not exists replies_checkin on public.checkin_replies(checkin_id, created_at);
 create index if not exists topics_sort on public.topics(sort_order, name);
 

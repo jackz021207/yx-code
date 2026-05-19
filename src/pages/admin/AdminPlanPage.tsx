@@ -29,6 +29,7 @@ import {
   Tags,
   X,
   Check,
+  GripVertical,
 } from 'lucide-react'
 import {
   useOwnerProfile,
@@ -37,6 +38,7 @@ import {
   useUpdatePlan,
   useUpdatePlanStatus,
   useDeletePlan,
+  useReorderPlans,
   useTopics,
   useCreateTopic,
   useUpdateTopic,
@@ -44,6 +46,23 @@ import {
 } from '@/lib/queries'
 import { TopicFilter, type TopicFilterValue } from '@/components/TopicFilter'
 import { TopicProgress } from '@/components/TopicProgress'
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 const DIFFICULTY_LABELS: Record<Difficulty, string> = {
   easy: '简单',
@@ -94,6 +113,12 @@ export default function AdminPlanPage() {
   const updatePlan = useUpdatePlan()
   const updateStatus = useUpdatePlanStatus()
   const deletePlan = useDeletePlan()
+  const reorderPlans = useReorderPlans()
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
 
   const plans = plansQ.data ?? []
   const topics = topicsQ.data ?? []
@@ -177,6 +202,18 @@ export default function AdminPlanPage() {
 
   const submitting = createPlan.isPending || updatePlan.isPending
   const loading = plansQ.isPending
+
+  const dragEnabled = statusFilter === 'all' && topicFilter === 'all'
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIdx = plans.findIndex((p) => p.id === active.id)
+    const newIdx = plans.findIndex((p) => p.id === over.id)
+    if (oldIdx < 0 || newIdx < 0) return
+    const newOrder = arrayMove(plans, oldIdx, newIdx).map((p) => p.id)
+    reorderPlans.mutate(newOrder)
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -266,6 +303,12 @@ export default function AdminPlanPage() {
               />
             </div>
 
+            {!dragEnabled && (
+              <p className="text-xs text-muted-foreground -mt-2">
+                提示：切回 "全部" + "全部 Topic" 才能拖拽排序
+              </p>
+            )}
+
             <div className="space-y-2">
               {loading && (
                 <>
@@ -281,133 +324,45 @@ export default function AdminPlanPage() {
                 </div>
               )}
 
-              {!loading &&
-                filtered.map((plan) => {
-                  const topic = plan.topic_id ? topicById.get(plan.topic_id) : null
-                  return (
-                    <Card key={plan.id} className="hover:shadow-md transition-shadow">
-                      <CardContent className="py-4">
-                        <div className="flex items-center gap-3">
-                          <button
-                            onClick={() =>
-                              updateStatus.mutate({
-                                id: plan.id,
-                                status: plan.status === 'completed' ? 'todo' : 'completed',
-                              })
-                            }
-                            className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
-                            title={plan.status === 'completed' ? '标为待做' : '标为完成'}
-                          >
-                            {plan.status === 'completed' ? (
-                              <CheckCircle2 className="h-5 w-5 text-green-500" />
-                            ) : (
-                              <Circle className="h-5 w-5" />
-                            )}
-                          </button>
-
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-sm font-mono text-muted-foreground">
-                                #{plan.lc_number}
-                              </span>
-                              <span
-                                className={`font-medium ${
-                                  plan.status === 'completed'
-                                    ? 'line-through text-muted-foreground'
-                                    : ''
-                                }`}
-                              >
-                                {plan.title}
-                              </span>
-                              <Badge variant={plan.difficulty as 'easy' | 'medium' | 'hard'}>
-                                {DIFFICULTY_LABELS[plan.difficulty]}
-                              </Badge>
-                              {topic && (
-                                <Badge variant="outline" className="font-normal">
-                                  {topic.name}
-                                </Badge>
-                              )}
-                              {plan.status === 'in_progress' && (
-                                <Badge variant="secondary">进行中</Badge>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2 mt-1 flex-wrap">
-                              {plan.tags.map((tag) => (
-                                <span
-                                  key={tag}
-                                  className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full"
-                                >
-                                  {tag}
-                                </span>
-                              ))}
-                              {plan.target_date && (
-                                <span className="text-xs text-muted-foreground">
-                                  目标：{plan.target_date}
-                                </span>
-                              )}
-                              {plan.note && (
-                                <span className="text-xs text-muted-foreground truncate max-w-[200px]">
-                                  · {plan.note}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1 flex-shrink-0">
-                            {plan.status === 'todo' && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                  updateStatus.mutate({ id: plan.id, status: 'in_progress' })
-                                }
-                                className="text-xs"
-                                title="标为进行中"
-                              >
-                                <PlayCircle className="h-4 w-4" />
-                              </Button>
-                            )}
-                            {plan.status === 'in_progress' && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                  updateStatus.mutate({ id: plan.id, status: 'todo' })
-                                }
-                                className="text-xs"
-                                title="撤回到待做"
-                              >
-                                <PauseCircle className="h-4 w-4" />
-                              </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => openEdit(plan)}
-                              className="text-muted-foreground hover:text-primary"
-                              title="编辑"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => {
-                                if (confirm(`删除题目 #${plan.lc_number} ${plan.title}？`)) {
-                                  deletePlan.mutate(plan.id)
-                                }
-                              }}
-                              className="text-muted-foreground hover:text-destructive"
-                              title="删除"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )
-                })}
+              {!loading && filtered.length > 0 && (
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleDragEnd}
+                >
+                  <SortableContext
+                    items={filtered.map((p) => p.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {filtered.map((plan) => (
+                      <SortablePlanRow
+                        key={plan.id}
+                        plan={plan}
+                        topic={plan.topic_id ? topicById.get(plan.topic_id) ?? null : null}
+                        dragEnabled={dragEnabled}
+                        onToggleComplete={() =>
+                          updateStatus.mutate({
+                            id: plan.id,
+                            status: plan.status === 'completed' ? 'todo' : 'completed',
+                          })
+                        }
+                        onStart={() =>
+                          updateStatus.mutate({ id: plan.id, status: 'in_progress' })
+                        }
+                        onPause={() =>
+                          updateStatus.mutate({ id: plan.id, status: 'todo' })
+                        }
+                        onEdit={() => openEdit(plan)}
+                        onDelete={() => {
+                          if (confirm(`删除题目 #${plan.lc_number} ${plan.title}？`)) {
+                            deletePlan.mutate(plan.id)
+                          }
+                        }}
+                      />
+                    ))}
+                  </SortableContext>
+                </DndContext>
+              )}
             </div>
           </>
         )}
@@ -694,5 +649,168 @@ function TopicManagerDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function SortablePlanRow({
+  plan,
+  topic,
+  dragEnabled,
+  onToggleComplete,
+  onStart,
+  onPause,
+  onEdit,
+  onDelete,
+}: {
+  plan: Plan
+  topic: Topic | null
+  dragEnabled: boolean
+  onToggleComplete: () => void
+  onStart: () => void
+  onPause: () => void
+  onEdit: () => void
+  onDelete: () => void
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: plan.id, disabled: !dragEnabled })
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      <Card className="hover:shadow-md transition-shadow">
+        <CardContent className="py-4">
+          <div className="flex items-center gap-3">
+            <button
+              {...attributes}
+              {...listeners}
+              disabled={!dragEnabled}
+              className={`flex-shrink-0 text-muted-foreground touch-none ${
+                dragEnabled
+                  ? 'cursor-grab active:cursor-grabbing hover:text-foreground'
+                  : 'cursor-not-allowed opacity-40'
+              }`}
+              title={dragEnabled ? '拖动调整顺序' : '清除筛选才能拖拽'}
+              aria-label="拖拽排序"
+            >
+              <GripVertical className="h-5 w-5" />
+            </button>
+
+            <button
+              onClick={onToggleComplete}
+              className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
+              title={plan.status === 'completed' ? '标为待做' : '标为完成'}
+            >
+              {plan.status === 'completed' ? (
+                <CheckCircle2 className="h-5 w-5 text-green-500" />
+              ) : (
+                <Circle className="h-5 w-5" />
+              )}
+            </button>
+
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-mono text-muted-foreground">
+                  #{plan.lc_number}
+                </span>
+                <span
+                  className={`font-medium ${
+                    plan.status === 'completed'
+                      ? 'line-through text-muted-foreground'
+                      : ''
+                  }`}
+                >
+                  {plan.title}
+                </span>
+                <Badge variant={plan.difficulty as 'easy' | 'medium' | 'hard'}>
+                  {DIFFICULTY_LABELS[plan.difficulty]}
+                </Badge>
+                {topic && (
+                  <Badge variant="outline" className="font-normal">
+                    {topic.name}
+                  </Badge>
+                )}
+                {plan.status === 'in_progress' && (
+                  <Badge variant="secondary">进行中</Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                {plan.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full"
+                  >
+                    {tag}
+                  </span>
+                ))}
+                {plan.target_date && (
+                  <span className="text-xs text-muted-foreground">
+                    目标：{plan.target_date}
+                  </span>
+                )}
+                {plan.note && (
+                  <span className="text-xs text-muted-foreground truncate max-w-[200px]">
+                    · {plan.note}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1 flex-shrink-0">
+              {plan.status === 'todo' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onStart}
+                  className="text-xs"
+                  title="标为进行中"
+                >
+                  <PlayCircle className="h-4 w-4" />
+                </Button>
+              )}
+              {plan.status === 'in_progress' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onPause}
+                  className="text-xs"
+                  title="撤回到待做"
+                >
+                  <PauseCircle className="h-4 w-4" />
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onEdit}
+                className="text-muted-foreground hover:text-primary"
+                title="编辑"
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onDelete}
+                className="text-muted-foreground hover:text-destructive"
+                title="删除"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   )
 }

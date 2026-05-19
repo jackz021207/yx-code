@@ -62,6 +62,7 @@ export interface Database {
           target_date: string | null
           status: PlanStatus
           note: string | null
+          sort_order: number
           completed_at: string | null
           created_at: string
         }
@@ -76,6 +77,7 @@ export interface Database {
           target_date?: string | null
           status?: PlanStatus
           note?: string | null
+          sort_order?: number
           completed_at?: string | null
           created_at?: string
         }
@@ -90,6 +92,7 @@ export interface Database {
           target_date?: string | null
           status?: PlanStatus
           note?: string | null
+          sort_order?: number
           completed_at?: string | null
           created_at?: string
         }

@@ -189,7 +189,8 @@ export function useRecentPlans(ownerId: string | undefined) {
         .select('*')
         .eq('user_id', ownerId!)
         .neq('status', 'completed')
-        .order('target_date', { ascending: true })
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: false })
         .limit(5)
       if (error) throw error
       return data ?? []
@@ -206,6 +207,7 @@ export function useAllPlans(ownerId: string | undefined) {
         .from('plans')
         .select('*')
         .eq('user_id', ownerId!)
+        .order('sort_order', { ascending: true })
         .order('created_at', { ascending: false })
       if (error) throw error
       return data ?? []
@@ -357,6 +359,45 @@ export function useUpdatePlanStatus() {
       qc.invalidateQueries({ queryKey: qk.allPlans })
       qc.invalidateQueries({ queryKey: qk.recentPlans })
       qc.invalidateQueries({ queryKey: ['month-completed'] })
+    },
+  })
+}
+
+// 重排：传入新顺序的 plan id 数组，把每个 id 的 sort_order 设为它在数组里的位置。
+// 乐观更新：先直接改 react-query cache，再后台发起一批 update；失败回滚。
+export function useReorderPlans() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (orderedIds: string[]) => {
+      // 一批 update，每行只改 sort_order
+      const results = await Promise.all(
+        orderedIds.map((id, idx) =>
+          supabase.from('plans').update({ sort_order: idx }).eq('id', id),
+        ),
+      )
+      const failed = results.find((r) => r.error)
+      if (failed?.error) throw failed.error
+    },
+    onMutate: async (orderedIds: string[]) => {
+      await qc.cancelQueries({ queryKey: qk.allPlans })
+      const previous = qc.getQueryData<Plan[]>(qk.allPlans)
+      if (previous) {
+        const newOrder = new Map(orderedIds.map((id, idx) => [id, idx]))
+        const next = previous
+          .map((p) =>
+            newOrder.has(p.id) ? { ...p, sort_order: newOrder.get(p.id)! } : p,
+          )
+          .sort((a, b) => a.sort_order - b.sort_order)
+        qc.setQueryData(qk.allPlans, next)
+      }
+      return { previous }
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous) qc.setQueryData(qk.allPlans, ctx.previous)
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: qk.allPlans })
+      qc.invalidateQueries({ queryKey: qk.recentPlans })
     },
   })
 }
